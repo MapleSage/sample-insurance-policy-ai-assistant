@@ -9,7 +9,7 @@ while [ $success = false ] && [ $attempt_num -le $max_attempts ]; do
   yum update -y
   yum install -y python3-pip
   yum remove -y python3-requests
-  pip3 install boto3 awscli streamlit streamlit-cognito-auth numpy python-dotenv pandas
+  pip3 install boto3 awscli streamlit streamlit-cognito-auth numpy python-dotenv pandas PyPDF2
   # Check the exit code of the command
   if [ $? -eq 0 ]; then
     echo "Installation succeeded!"
@@ -91,6 +91,104 @@ def logout():
 with st.sidebar:
     st.text(f"Welcome,\n{authenticator.get_username()}")
     st.button("Logout", "logout_btn", on_click=logout)
+    
+    # Document Upload Section
+    st.markdown("---")
+    st.header("📄 Document Management")
+    
+    # Upload customer policy
+    st.subheader("Upload Your Policy")
+    uploaded_policy = st.file_uploader(
+        "Upload your insurance policy document",
+        type=['txt', 'pdf'],
+        key="policy_upload"
+    )
+    
+    if uploaded_policy is not None:
+        if st.button("Save Policy Document"):
+            try:
+                # Read file content
+                file_content = uploaded_policy.read()
+                username = authenticator.get_username()
+                
+                # Upload to S3
+                s3_key = f'{username}.txt'
+                if uploaded_policy.type == 'application/pdf':
+                    # For PDF files, you'd need to extract text
+                    # For now, treating as text for demo
+                    content = file_content.decode('utf-8', errors='ignore')
+                else:
+                    content = file_content.decode('utf-8')
+                
+                s3.put_object(
+                    Bucket=bucket_name,
+                    Key=s3_key,
+                    Body=content.encode('utf-8'),
+                    ContentType='text/plain'
+                )
+                
+                st.success(f"✅ Policy uploaded successfully for {username}")
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"❌ Upload failed: {str(e)}")
+    
+    # Upload general documents to Knowledge Base
+    st.subheader("Add Policy Documents")
+    uploaded_docs = st.file_uploader(
+        "Upload general policy documents (PDF)",
+        type=['pdf'],
+        accept_multiple_files=True,
+        key="docs_upload"
+    )
+    
+    if uploaded_docs:
+        if st.button("Add to Knowledge Base"):
+            try:
+                uploaded_count = 0
+                for doc in uploaded_docs:
+                    # Upload to S3 policy_docs folder
+                    s3_key = f'policy_docs/{doc.name}'
+                    s3.put_object(
+                        Bucket=bucket_name,
+                        Key=s3_key,
+                        Body=doc.read(),
+                        ContentType='application/pdf'
+                    )
+                    uploaded_count += 1
+                
+                st.success(f"✅ Uploaded {uploaded_count} documents to Knowledge Base")
+                st.info("📋 Documents will be processed automatically")
+                
+            except Exception as e:
+                st.error(f"❌ Upload failed: {str(e)}")
+    
+    # Knowledge Base Management
+    st.markdown("---")
+    st.subheader("🧠 Knowledge Base")
+    
+    if st.button("🔄 Refresh Knowledge Base"):
+        try:
+            # Trigger KB ingestion job
+            response = bedrock_agent_client.start_ingestion_job(
+                knowledgeBaseId=kb_id,
+                dataSourceId="{{DATA_SOURCE_ID}}",  # You'll need to add this
+                description="Manual refresh of insurance documents"
+            )
+            st.success("✅ Knowledge Base refresh started")
+            st.info(f"📋 Job ID: {response.get('ingestionJob', {}).get('ingestionJobId', 'N/A')}")
+        except Exception as e:
+            st.error(f"❌ Refresh failed: {str(e)}")
+    
+    # Display current policy status
+    st.markdown("---")
+    st.subheader("📋 Your Policy Status")
+    if policy_details and policy_details != "No insurance policy found for the customer":
+        st.success("✅ Policy loaded")
+        with st.expander("View Policy Summary"):
+            st.text_area("Policy Details", policy_details[:500] + "...", height=150)
+    else:
+        st.warning("⚠️ No policy found. Please upload your policy document.")
 
 ################################################################################################################
 # Creating random session_id using os.urandom
